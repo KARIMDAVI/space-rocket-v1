@@ -1,4 +1,4 @@
-# space-rocket-v1
+# 🚀 space-rocket-v1 🚀
 
 Avoid hitting obstacles in space and survive as long as possible.
 
