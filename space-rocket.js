@@ -1,0 +1,814 @@
+import * as THREE from "https://esm.sh/three";
+import { OrbitControls } from "https://esm.sh/three/addons/controls/OrbitControls.js";
+import TWEEN from "https://esm.sh/three/addons/libs/tween.module.js";
+import * as SceneUtils from "https://esm.sh/three/addons/utils/SceneUtils.js";
+import * as BufferGeometryUtils from "https://esm.sh/three/addons/utils/BufferGeometryUtils.js";
+
+var OutlineShader = {
+  uniforms: {
+    offset: { type: 'f', value: 0.3 },
+    color: { type: 'v3', value: new THREE.Color('#000000') },
+    alpha: { type: 'f', value: 1.0 },
+  },
+
+  vertexShader: `
+    uniform float offset;
+
+    void main() {
+      vec4 pos = modelViewMatrix * vec4( position + normal * offset, 1.0 );
+      gl_Position = projectionMatrix * pos;
+    }
+  `,
+
+  fragmentShader: `
+    uniform vec3 color;
+    uniform float alpha;
+
+    void main() {
+      gl_FragColor = vec4( color, alpha );
+    }
+  `,
+};
+
+THREE.ColorManagement.enabled = false;
+
+var container = document.getElementById('container');
+
+var renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+container.appendChild(renderer.domElement);
+renderer.domElement.style.cursor = 'pointer';
+
+var camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100000);
+camera.position.set(0, -6, 3);
+
+var controls = new OrbitControls(camera, renderer.domElement);
+controls.target.y = 1;
+controls.enableDamping = true;
+controls.enabled = false;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x00212d);
+scene.fog = new THREE.Fog(0x00212d, 10, 20);
+
+// lights
+var aLight = new THREE.AmbientLight(0x555555);
+scene.add(aLight);
+
+var dLight1 = new THREE.DirectionalLight(0xffffff, 2);
+dLight1.position.set(0.7, 1, 1);
+scene.add(dLight1);
+
+// var dlh1 = new THREE.DirectionalLightHelper( dLight1, 0.5 );
+// scene.add( dlh1 );
+
+// var gh = new THREE.GridHelper( 2, 10, 0x000000, 0x808080 );
+// scene.add( gh );
+
+// -------------------------------------------
+
+var rocketGroup = new THREE.Group();
+scene.add(rocketGroup);
+
+var rocket = new THREE.Group();
+rocket.position.y = -1.5; // vertically center
+rocketGroup.add(rocket);
+
+// -------------------------------------------
+
+// body
+
+var bodyRadius = 5.6;
+var bodyHeight = 52;
+var noseHeight = 12.5;
+var boattailHeight = 7.3;
+var boattailRadius = 3.8;
+var profileSegments = 28;
+
+var points = [];
+var bodyTopY = bodyHeight - noseHeight;
+var boattailTopY = boattailHeight;
+
+// bottom center
+points.push(new THREE.Vector2(0, 0));
+
+// boattail + cylindrical body
+points.push(new THREE.Vector2(boattailRadius, boattailTopY));
+points.push(new THREE.Vector2(bodyRadius, boattailTopY));
+points.push(new THREE.Vector2(bodyRadius, bodyTopY));
+
+// temporary tip (we’ll replace with proper ogive curve next step)
+for (var i = 1; i <= profileSegments; i++) {
+  var t = i / profileSegments; // 0..1 along nose
+  var y = bodyTopY + t * noseHeight;
+
+  // smooth, aerodynamic nose falloff
+  var radius = bodyRadius * Math.sqrt(1 - t * t);
+
+  points.push(new THREE.Vector2(Math.max(radius, 0), y));
+}
+
+
+
+var rocketGeo = new THREE.LatheGeometry(points, 48);
+rocketGeo.deleteAttribute('normal');
+rocketGeo = BufferGeometryUtils.mergeVertices(rocketGeo);
+rocketGeo.computeVertexNormals();
+
+
+var rocketMat = new THREE.MeshToonMaterial({
+  color: 0x999999,
+  // shininess: 1,
+});
+
+var rocketOutlineMat = new THREE.ShaderMaterial({
+  uniforms: THREE.UniformsUtils.clone(OutlineShader.uniforms),
+  vertexShader: OutlineShader.vertexShader,
+  fragmentShader: OutlineShader.fragmentShader,
+  side: THREE.BackSide,
+});
+
+var rocketObj = SceneUtils.createMultiMaterialObject(rocketGeo, [rocketMat, rocketOutlineMat]);
+rocketObj.scale.setScalar(0.1);
+rocket.add(rocketObj);
+
+// var wireframe = new THREE.WireframeGeometry( rocketGeo );
+// var line = new THREE.LineSegments( wireframe );
+// line.material.color.setHex( 0x000000 );
+// rocketObj.add( line );
+
+// -------------------------------------------
+
+// window
+
+var portalGeo = new THREE.CylinderGeometry(0.26, 0.26, 1.6, 32);
+var portalMat = new THREE.MeshToonMaterial({ color: 0x016589 });
+var portalOutlineMat = rocketOutlineMat.clone();
+portalOutlineMat.uniforms.offset.value = 0.03;
+var portal = SceneUtils.createMultiMaterialObject(portalGeo, [portalMat, portalOutlineMat]);
+portal.position.y = 2;
+portal.rotation.x = Math.PI / 2;
+rocket.add(portal);
+
+// ------------
+
+var circle = new THREE.Shape();
+circle.absarc(0, 0, 3.5, 0, Math.PI * 2);
+
+var hole = new THREE.Path();
+hole.absarc(0, 0, 3, 0, Math.PI * 2);
+circle.holes.push(hole);
+
+var tubeExtrudeSettings = {
+  depth: 17,
+  steps: 1,
+  bevelEnabled: false,
+};
+var tubeGeo = new THREE.ExtrudeGeometry(circle, tubeExtrudeSettings);
+tubeGeo.computeVertexNormals();
+tubeGeo.center();
+
+var tubeMat = new THREE.MeshToonMaterial({
+  color: 0x930000,
+  // shininess: 1,
+});
+
+var tubeOutlineMat = rocketOutlineMat.clone();
+tubeOutlineMat.uniforms.offset.value = 0.2;
+var tube = SceneUtils.createMultiMaterialObject(tubeGeo, [tubeMat, tubeOutlineMat]);
+tube.position.y = 2;
+tube.scale.setScalar(0.1);
+rocket.add(tube);
+
+// var wireframe = new THREE.WireframeGeometry( tubeGeo );
+// var line = new THREE.LineSegments( wireframe );
+// line.material.color.setHex( 0x000000 );
+// tube.add( line );
+
+// -------------------------------------------
+
+// wing
+
+var shape = new THREE.Shape();
+
+var finRoot = 34;
+var finTip = 16;
+var finSpan = 24;
+var finSweep = 12;
+
+shape.moveTo(0, 0);
+shape.lineTo(0, -finRoot);
+shape.lineTo(finSpan, -finRoot + finSweep);
+shape.lineTo(finSpan, -finRoot + finSweep + finTip);
+shape.lineTo(0, -finRoot + finTip);
+shape.closePath();
+
+
+var extrudeSettings = {
+  steps: 1,
+  depth: 2.2,
+  bevelEnabled: true,
+  bevelThickness: 0.7,
+  bevelSize: 0.9,
+  bevelSegments: 3,
+};
+
+var wingGroup = new THREE.Group();
+rocket.add(wingGroup);
+
+var wingGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+wingGeo.deleteAttribute('normal');
+wingGeo = BufferGeometryUtils.mergeVertices(wingGeo);
+wingGeo.computeVertexNormals();
+
+var wingMat = new THREE.MeshToonMaterial({
+  color: 0x930000,
+  // shininess: 1,
+});
+
+wingMat.needsUpdate = true;
+
+var wingOutlineMat = rocketOutlineMat.clone();
+wingOutlineMat.uniforms.offset.value = 1;
+
+var wing = SceneUtils.createMultiMaterialObject(wingGeo, [wingMat, wingOutlineMat]);
+
+wing.scale.setScalar(0.032);
+wing.position.set(0.63, 2.2, 0);
+wingGroup.add(wing);
+
+// var wireframe = new THREE.WireframeGeometry( wingGeo );
+// var line = new THREE.LineSegments( wireframe );
+// line.material.color.setHex( 0x000000 );
+// wing.add( line );
+
+var wing2 = wingGroup.clone();
+wing2.rotation.y = Math.PI;
+rocket.add(wing2);
+
+var wing3 = wingGroup.clone();
+wing3.rotation.y = Math.PI / 2;
+wing3.scale.setScalar(0.65);
+wing3.position.y = -0.45;
+rocket.add(wing3);
+
+var wing4 = wingGroup.clone();
+wing4.rotation.y = -Math.PI / 2;
+wing4.scale.setScalar(0.65);
+wing4.position.y = -0.45;
+rocket.add(wing4);
+
+// -------------------------------------------
+
+// fire
+
+var firePoints = [];
+
+for (var i = 0; i <= 10; i++) {
+  var point = new THREE.Vector2(Math.sin(i * 0.18) * 8, (-10 + i) * 2.5);
+
+  firePoints.push(point);
+}
+
+var fireGeo = new THREE.LatheGeometry(firePoints, 32);
+
+var fireMat = new THREE.ShaderMaterial({
+  uniforms: {
+    color1: { value: new THREE.Color('yellow') },
+    color2: { value: new THREE.Color(0xff7b00) }, // orange
+  },
+  vertexShader: `
+    varying vec2 vUv;
+
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 color1;
+    uniform vec3 color2;
+
+    varying vec2 vUv;
+
+    void main() {
+      gl_FragColor = vec4(mix(color1, color2, vUv.y), 1.0);
+    }
+  `,
+});
+
+var fire = new THREE.Mesh(fireGeo, fireMat);
+fire.scale.setScalar(0.06);
+rocket.add(fire);
+
+var fireLight = new THREE.PointLight(0xff7b00, 6, 9, 2);
+fireLight.position.set(0, -1, 0);
+rocket.add(fireLight);
+
+// var fireLightHelper = new THREE.PointLightHelper(fireLight, 0.5);
+// scene.add(fireLightHelper);
+
+var fireUpdate = function () {
+  fire.scale.y = THREE.MathUtils.randFloat(0.04, 0.08);
+};
+
+// -------------------------------------------
+
+// star particles
+
+// https://aerotwist.com/tutorials/creating-particles-with-three-js/
+// https://aerotwist.com/static/tutorials/creating-particles-with-three-js/demo/
+
+var ParticleShader = {
+  uniforms: {
+    color: { type: 'v3', value: new THREE.Color(0x2a4a52) },
+    texture: { type: 't', value: null },
+    time: { type: 'f', value: 0 },
+    size: { type: 'f', value: 50.0 },
+
+    // ShaderMaterial texture and fog: https://jsfiddle.net/2pha/h83py9gu/
+    fogColor: { type: 'c', value: scene.fog.color },
+    fogNear: { type: 'f', value: scene.fog.near },
+    fogFar: { type: 'f', value: scene.fog.far },
+  },
+
+  vertexShader: `
+    uniform float time;
+    uniform float size;
+    attribute float alphaOffset;
+    varying float vAlpha;
+    uniform vec4 origin;
+
+    void main() {
+
+      // vAlpha = 0.5 * ( 1.0 + sin( alphaOffset + time ) );
+      vAlpha = 0.9;
+
+      vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+      float cameraDist = distance( mvPosition, origin );
+      gl_PointSize = size / cameraDist;
+      gl_Position = projectionMatrix * mvPosition;
+
+    }
+  `,
+
+  fragmentShader: `
+    uniform float time;
+    uniform vec3 color;
+
+    uniform vec3 fogColor;
+    uniform float fogNear;
+    uniform float fogFar;
+
+    varying float vAlpha;
+
+    void main() {
+      vec2 center = gl_PointCoord - 0.5;
+      float dist = length(center);
+      float alpha = smoothstep(0.5, 0.1, dist) * vAlpha;
+      gl_FragColor = vec4( color, alpha );
+
+      #ifdef USE_FOG
+        #ifdef USE_LOGDEPTHBUF_EXT
+          float depth = gl_FragDepthEXT / gl_FragCoord.w;
+        #else
+          float depth = gl_FragCoord.z / gl_FragCoord.w;
+        #endif
+
+        float fogFactor = smoothstep( fogNear, fogFar, depth );
+        gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+      #endif
+    }
+  `,
+};
+
+class Particles extends THREE.Group {
+  constructor(options) {
+    super();
+
+    var color = (this.color = options.color || 0x2a4a52);
+    ParticleShader.uniforms.color.value.setHex(color); // light pink
+    var size = (this.size = options.size || 0.4);
+
+    var pointCount = (this.pointCount = options.pointCount || 40);
+    var range = (this.range = options.range || new THREE.Vector3(2, 2, 2));
+    var speed = (this.speed = this.speedTarget = options.speed || 0.0005);
+
+    //
+
+    ParticleShader.uniforms.size.value = size;
+
+    var pointsMat = new THREE.ShaderMaterial({
+      uniforms: ParticleShader.uniforms,
+      vertexShader: ParticleShader.vertexShader,
+      fragmentShader: ParticleShader.fragmentShader,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      fog: true,
+    });
+
+    var pointsGeo = new THREE.BufferGeometry();
+
+    var positions = new Float32Array(pointCount * 3);
+    var alphas = new Float32Array(pointCount);
+
+    for (var i = 0; i < pointCount; i++) {
+      positions[i * 3 + 0] = THREE.MathUtils.randFloatSpread(range.x);
+      positions[i * 3 + 1] = THREE.MathUtils.randFloatSpread(range.y);
+      positions[i * 3 + 2] = THREE.MathUtils.randFloatSpread(range.z);
+
+      alphas[i] = i;
+    }
+
+    pointsGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    pointsGeo.setAttribute('alphaOffset', new THREE.BufferAttribute(alphas, 1));
+
+    var points = (this.points = new THREE.Points(pointsGeo, pointsMat));
+    points.sortParticles = true;
+    points.renderOrder = 1;
+
+    this.add(points);
+
+    var box = new THREE.Box3();
+    box.setFromCenterAndSize(points.position, range);
+
+    // var boxHelper = new THREE.Box3Helper( box );
+    // this.add( boxHelper );
+  }
+
+  update() {
+    var array = this.points.geometry.attributes.position.array;
+
+    for (var i = 0; i < this.pointCount; i++) {
+      var indexY = i * 3 + 1;
+
+      // check if we need to reset
+      if (array[indexY] < -this.range.y / 2) {
+        array[indexY] = this.range.y / 2;
+      }
+
+      array[indexY] -= this.speed;
+    }
+
+    this.points.geometry.attributes.position.needsUpdate = true;
+  }
+}
+
+// ---------------------------------
+
+// scale particles based on window height so they are the same size on different sized windows
+function getParticleSize() {
+  var size = 120 * (window.innerHeight / 919);
+  return Math.max(size, 25);
+}
+
+var stars = new Particles({
+  color: 0xffffff,
+  range: new THREE.Vector3(30, 30, 30),
+  pointCount: 320,
+  size: getParticleSize(),
+  speed: 0.1,
+});
+
+scene.add(stars);
+
+var obstacleGroup = new THREE.Group();
+scene.add(obstacleGroup);
+
+var obstacles = [];
+var baseObstacleCount = 8;
+var maxObstacleCount = 16;
+var spawnScoreStep = 120;
+var nextSpawnScore = spawnScoreStep;
+
+var obstacleRangeX = 6;
+var obstacleTopY = 12;
+var obstacleBottomY = -12;
+var obstacleBaseSpeedMin = 0.04;
+var obstacleBaseSpeedMax = 0.08;
+var obstacleSpeedScale = 1.0;
+
+var rocketWorldPos = new THREE.Vector3();
+var obstacleWorldPos = new THREE.Vector3();
+var rocketHitRadius = 0.42;
+var obstacleHitRadius = 0.33;
+
+var isHit = false;
+var score = 0;
+var bestScore = 0;
+var survivalTime = 0;
+var scoreRate = 18;
+
+try {
+  bestScore = Number(localStorage.getItem('spaceluncherBestScore') || 0);
+} catch (error) {
+  bestScore = 0;
+}
+
+var scoreValueEl = document.getElementById('scoreValue');
+var bestValueEl = document.getElementById('bestValue');
+var statusTextEl = document.getElementById('statusText');
+
+function setStatusText(text) {
+  if (statusTextEl) statusTextEl.textContent = text;
+}
+
+function updateHud() {
+  if (scoreValueEl) scoreValueEl.textContent = Math.floor(score).toString();
+  if (bestValueEl) bestValueEl.textContent = Math.floor(bestScore).toString();
+}
+
+function setBestScore(value) {
+  bestScore = value;
+  try {
+    localStorage.setItem('spaceluncherBestScore', String(value));
+  } catch (error) {
+    // Storage can be unavailable in private mode or sandboxed contexts.
+  }
+}
+
+function resetObstacle(obstacle, randomY) {
+  obstacle.position.x = THREE.MathUtils.randFloatSpread(obstacleRangeX * 2);
+  obstacle.position.y = randomY
+    ? THREE.MathUtils.randFloat(obstacleBottomY, obstacleTopY)
+    : obstacleTopY + THREE.MathUtils.randFloat(1.5, 8.0);
+  obstacle.position.z = THREE.MathUtils.randFloat(-2.0, 2.0);
+
+  obstacle.userData.baseSpeed = THREE.MathUtils.randFloat(obstacleBaseSpeedMin, obstacleBaseSpeedMax);
+  obstacle.userData.spinX = THREE.MathUtils.randFloat(0.008, 0.018);
+  obstacle.userData.spinY = THREE.MathUtils.randFloat(0.010, 0.020);
+}
+
+function createObstacle() {
+  var obstacleGeo = new THREE.DodecahedronGeometry(0.45, 0);
+  var obstacleMat = new THREE.MeshToonMaterial({ color: 0x1f4a57 });
+  var obstacleOutlineMat = rocketOutlineMat.clone();
+  obstacleOutlineMat.uniforms.offset.value = 0.06;
+
+  var obstacle = SceneUtils.createMultiMaterialObject(obstacleGeo, [obstacleMat, obstacleOutlineMat]);
+  resetObstacle(obstacle, true);
+  return obstacle;
+}
+
+function maybeSpawnObstacle() {
+  if (score < nextSpawnScore || obstacles.length >= maxObstacleCount) return;
+
+  var newObstacle = createObstacle();
+  newObstacle.position.y = obstacleTopY + THREE.MathUtils.randFloat(2.0, 8.0);
+  obstacleGroup.add(newObstacle);
+  obstacles.push(newObstacle);
+  nextSpawnScore += spawnScoreStep;
+}
+
+for (var i = 0; i < baseObstacleCount; i++) {
+  var initialObstacle = createObstacle();
+  obstacleGroup.add(initialObstacle);
+  obstacles.push(initialObstacle);
+}
+
+function restartGame() {
+  isHit = false;
+  score = 0;
+  survivalTime = 0;
+  obstacleSpeedScale = 1.0;
+  nextSpawnScore = spawnScoreStep;
+
+  fire.visible = true;
+  fireLight.visible = true;
+  stars.speedTarget = 0.1;
+  renderer.domElement.style.cursor = 'pointer';
+
+  rocketGroup.scale.set(1, 1, 1);
+  rocket.rotation.y = 0;
+
+  while (obstacles.length > baseObstacleCount) {
+    var removedObstacle = obstacles.pop();
+    obstacleGroup.remove(removedObstacle);
+  }
+
+  while (obstacles.length < baseObstacleCount) {
+    var addedObstacle = createObstacle();
+    obstacleGroup.add(addedObstacle);
+    obstacles.push(addedObstacle);
+  }
+
+  for (var i = 0; i < obstacles.length; i++) {
+    resetObstacle(obstacles[i], true);
+  }
+
+  setStatusText('Click and hold to boost. Dodge incoming asteroids.');
+  updateHud();
+}
+
+function gameOver() {
+  isHit = true;
+  fire.visible = false;
+  fireLight.visible = false;
+  stars.speedTarget = 0.03;
+  renderer.domElement.style.cursor = 'pointer';
+
+  if (score > bestScore) {
+    setBestScore(Math.floor(score));
+  }
+
+  setStatusText('Crash! Click or tap to restart.');
+  updateHud();
+}
+
+updateHud();
+
+// -------------------------------------------
+
+// input
+
+//
+
+var plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+// var helper = new THREE.PlaneHelper( plane, 5, 0xffff00 );
+// scene.add( helper );
+
+var rocketTarget = new THREE.Vector3();
+
+var cameraTarget = new THREE.Vector3();
+cameraTarget.copy(camera.position);
+
+var raycaster = new THREE.Raycaster();
+
+//
+
+var mouse = new THREE.Vector2();
+
+// var targetSphere = new THREE.Mesh(
+// 	new THREE.SphereBufferGeometry( 0.2 ),
+// 	new THREE.MeshPhongMaterial({ color: 0x00ff00 })
+// );
+
+// scene.add( targetSphere );
+
+function mousemove(event) {
+  var e = (event.touches && event.touches[0]) || event;
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+  cameraTarget.x = -mouse.x * 1;
+  cameraTarget.z = 3 + mouse.y * 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  raycaster.ray.intersectPlane(plane, rocketTarget);
+  // targetSphere.position.copy( rocketTarget );
+}
+
+function mousedown(event) {
+  event.preventDefault();
+
+  if (isHit) {
+    restartGame();
+    return;
+  }
+
+  TWEEN.removeAll();
+
+  // rotation
+  var dir = mouse.x < 0 ? -1 : 1;
+  var tween = new TWEEN.Tween(rocket.rotation)
+    .to({ y: dir * Math.PI }, 1000)
+    .easing(TWEEN.Easing.Quadratic.InOut)
+    .start();
+
+  // scale
+  var tween = new TWEEN.Tween(rocketGroup.scale)
+    .to({ x: 0.9, y: 1.2, z: 0.9 }, 400)
+    .easing(TWEEN.Easing.Cubic.InOut)
+    .start();
+
+  stars.speedTarget = 0.3;
+  setStatusText('Dodge asteroids. Survive as long as possible.');
+  renderer.domElement.style.cursor = 'none';
+}
+
+function mouseup(event) {
+  if (isHit) return;
+  var tween = new TWEEN.Tween(rocketGroup.scale)
+    .to({ x: 1, y: 1, z: 1 }, 400)
+    .easing(TWEEN.Easing.Cubic.InOut)
+    .start();
+
+  stars.speedTarget = 0.1;
+  renderer.domElement.style.cursor = 'pointer';
+}
+
+renderer.domElement.addEventListener('mousemove', mousemove, false);
+renderer.domElement.addEventListener('mousedown', mousedown, false);
+renderer.domElement.addEventListener('mouseup', mouseup, false);
+
+renderer.domElement.addEventListener('touchmove', mousemove, false);
+renderer.domElement.addEventListener('touchstart', mousedown, false);
+renderer.domElement.addEventListener('touchend', mouseup, false);
+
+// -------------------------------------------
+
+window.addEventListener('resize', resize, false);
+
+function resize() {
+  stars.size = ParticleShader.uniforms.size.value = getParticleSize();
+
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+var clock = new THREE.Clock();
+var time = 0;
+var angle = THREE.MathUtils.degToRad(3);
+
+function updateDifficulty(delta) {
+  survivalTime += delta;
+  obstacleSpeedScale = 1 + Math.min(survivalTime * 0.15, 2.5);
+
+  score += delta * scoreRate * obstacleSpeedScale;
+  maybeSpawnObstacle();
+  updateHud();
+}
+
+function updateObstacles(delta) {
+  for (var i = 0; i < obstacles.length; i++) {
+    var obstacle = obstacles[i];
+
+    var moveStep = obstacle.userData.baseSpeed * obstacleSpeedScale * delta * 60;
+    obstacle.position.y -= moveStep;
+    obstacle.rotation.x += obstacle.userData.spinX * delta * 60;
+    obstacle.rotation.y += obstacle.userData.spinY * delta * 60;
+
+    if (obstacle.position.y < obstacleBottomY) {
+      resetObstacle(obstacle, false);
+    }
+  }
+}
+
+function checkObstacleCollision() {
+  if (isHit) return;
+
+  rocketGroup.getWorldPosition(rocketWorldPos);
+
+  for (var i = 0; i < obstacles.length; i++) {
+    obstacles[i].getWorldPosition(obstacleWorldPos);
+
+    var minDist = rocketHitRadius + obstacleHitRadius;
+    var dist = rocketWorldPos.distanceTo(obstacleWorldPos);
+
+    if (dist < minDist) {
+      gameOver();
+      break;
+    }
+  }
+}
+
+restartGame();
+
+loop();
+
+function loop() {
+  requestAnimationFrame(loop);
+  TWEEN.update();
+  controls.update();
+
+  var delta = clock.getDelta();
+  time += delta;
+
+  rocketGroup.rotation.y = Math.cos(time * 8) * angle;
+
+  if (!isHit) {
+    fireUpdate();
+    updateDifficulty(delta);
+    updateObstacles(delta);
+    checkObstacleCollision();
+  }
+
+  stars.update();
+
+  if (!isHit) {
+    lerp(rocketGroup.position, 'y', rocketTarget.y);
+    lerp(rocketGroup.position, 'x', rocketTarget.x);
+  }
+
+  lerp(camera.position, 'x', cameraTarget.x);
+  lerp(camera.position, 'z', cameraTarget.z);
+
+  lerp(stars, 'speed', stars.speedTarget);
+
+  renderer.render(scene, camera);
+}
+
+function lerp(object, prop, destination) {
+  if (object && object[prop] !== destination) {
+    object[prop] += (destination - object[prop]) * 0.1;
+
+    if (Math.abs(destination - object[prop]) < 0.01) {
+      object[prop] = destination;
+    }
+  }
+}
