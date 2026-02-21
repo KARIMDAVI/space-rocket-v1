@@ -2,8 +2,6 @@
 
 Avoid hitting obstacles in space and survive as long as possible.
 
-## GitHub Status
-
 ![GitHub repo size](https://img.shields.io/github/repo-size/KARIMDAVI/space-rocket-v1)
 ![GitHub last commit](https://img.shields.io/github/last-commit/KARIMDAVI/space-rocket-v1)
 ![GitHub stars](https://img.shields.io/github/stars/KARIMDAVI/space-rocket-v1?style=social)
